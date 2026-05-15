@@ -16,7 +16,7 @@ def get_file_total_size(fpin) -> int:
     return total
 
 
-def upload_files_with_ssh_client(ssh_client: SimpleSSHClient, files: list[tuple[str, str]], block_siz: int = 1024 * 1024):
+def upload_files_with_ssh_client(ssh_client: SimpleSSHClient, files: list[tuple[str, str]], block_siz: int = 12 * 1024):
     for local_path, remote_path in files:
         aim_dir = "/".join(remote_path.split("/")[:-1])
         ssh_client.exec_cmd(f"mkdir -p '{aim_dir}'")
