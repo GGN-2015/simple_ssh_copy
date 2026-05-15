@@ -1,0 +1,19 @@
+[project]
+name = "simple-ssh-copy"
+version = "0.1.0"
+description = "Transfer files to/from a minimal machine with SSH access."
+authors = [
+    {name = "GGN_2015",email = "neko@jlulug.org"}
+]
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "tqdm",
+    "paramiko"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
