@@ -1,6 +1,6 @@
 [project]
 name = "simple-ssh-copy"
-version = "0.1.0"
+version = "0.1.1"
 description = "Transfer files to/from a minimal machine with SSH access."
 authors = [
     {name = "GGN_2015",email = "neko@jlulug.org"}
