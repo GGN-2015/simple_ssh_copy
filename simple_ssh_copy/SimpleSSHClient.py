@@ -1,6 +1,21 @@
 import paramiko
 
-def make_ssh_client(hostname: str, username: str, password:str, port: int = 22, timeout:float=15):
+try:
+    from .key_manager import load_rsa_key, load_ed25519_key
+except:
+    from key_manager import load_rsa_key, load_ed25519_key
+
+def make_ssh_client(hostname: str, username: str, password:str, port: int = 22, timeout:float=15, algorithm="rsa"):
+    if algorithm not in ["rsa", "ed25519"]:
+        raise ValueError(f"algorithm '{algorithm}' not allowed.")
+    
+    if algorithm == "rsa":
+        key = load_rsa_key()
+    elif algorithm == "ed25519":
+        key = load_ed25519_key()
+    else:
+        key = None
+
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(
@@ -8,7 +23,10 @@ def make_ssh_client(hostname: str, username: str, password:str, port: int = 22, 
         port=port,
         username=username,
         password=password,
-        timeout=timeout
+        timeout=timeout,
+        pkey=key,
+        look_for_keys=False,
+        allow_agent=False
     )
     return ssh
 

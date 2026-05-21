@@ -3,6 +3,7 @@ __pycache__/
 *.py[codz]
 *$py.class
 .vscode/
+simple_ssh_copy/keys/*
 
 # C extensions
 *.so

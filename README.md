@@ -9,6 +9,8 @@ pip install simple_ssh_copy
 
 ## Usage
 
+### Python
+
 ```python
 import simple_ssh_copy
 
@@ -30,4 +32,14 @@ simple_ssh_copy.upload(HOSTNAME, USERNAME, PASSWORD, [(LOCAL_PATH, REMOTE_PATH)]
 REMOTE_DIR = ".."
 LOCAL_DIR = "..."
 simple_ssh_copy.download_dir(HOSTNAME, USERNAME, PASSWORD, REMOTE_DIR, LOCAL_DIR)
+```
+
+### Command Line
+
+```bash
+# Upload file via ssh-rsa
+python3 -m simple_ssh_copy <local_file> <user>@<host_ip>:<remote_path>
+
+# Download file via ssh-rsa
+python3 -m simple_ssh_copy <user>@<host_ip>:<remote_path> <local_file>
 ```

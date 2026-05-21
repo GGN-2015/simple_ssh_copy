@@ -8,7 +8,6 @@ except:
     from SimpleSSHClient import SimpleSSHClient
     import utils
 
-
 def check_remote_dir_exists(ssh_client: SimpleSSHClient, remote_dir: str) -> bool:
     cmd = f"test -d '{remote_dir}'"
     code, _, _ = ssh_client.exec_cmd(cmd)
