@@ -52,14 +52,27 @@ def upload_files_with_ssh_client(ssh_client: SimpleSSHClient, files: list[tuple[
 def upload(
         hostname: str,
         username: str,
-        password: str,
+        password: str | None,
         files: list[tuple[str, str]],
         block_siz: int = 12 * 1024,
         port: int = 22,
-        timeout: float = 15):
+        timeout: float = 15,
+        allow_ssh_rsa_host_key: bool = True,
+        allow_agent: bool | None = None,
+        look_for_keys: bool | None = None,
+        key_filename: str | list[str] | None = None):
     
     block_siz = min(block_siz, 12 * 1024)
-    with SimpleSSHClient(hostname, username, password, port, timeout) as ssh_client:
+    with SimpleSSHClient(
+            hostname,
+            username,
+            password,
+            port,
+            timeout,
+            allow_ssh_rsa_host_key,
+            allow_agent,
+            look_for_keys,
+            key_filename) as ssh_client:
         upload_files_with_ssh_client(
             ssh_client,
             files,

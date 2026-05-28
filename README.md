@@ -1,5 +1,22 @@
 # simple_ssh_copy
-Transfer files to/from a minimal machine with SSH access.
+
+Transfer files to and from small or old Linux devices over SSH.
+
+This package intentionally avoids SFTP/SCP subsystems. It only needs a working
+SSH login and a few basic remote shell commands, so it is useful for minimal
+systems, embedded devices, rescue environments, and older SSH servers.
+
+## Features
+
+- Upload a local file to a remote host.
+- Download a remote file to the local machine.
+- Download a remote directory recursively.
+- Password, empty-password, SSH agent, `~/.ssh` key, and explicit private-key
+  authentication.
+- Legacy SSH compatibility enabled by default:
+  - `HostKeyAlgorithms=+ssh-rsa`
+  - RSA public-key signing with `ssh-rsa`
+  - `MACs=+hmac-sha1-96,hmac-sha1,hmac-md5`
 
 ## Install
 
@@ -7,39 +24,139 @@ Transfer files to/from a minimal machine with SSH access.
 pip install simple_ssh_copy
 ```
 
-## Usage
+For local development:
 
-### Python
+```bash
+pip install -e .
+```
+
+## Command Line
+
+Upload a file:
+
+```bash
+python -m simple_ssh_copy ./test-file.txt root@192.168.1.10:/home/root/test-file.txt
+```
+
+Download a file:
+
+```bash
+python -m simple_ssh_copy root@192.168.1.10:/home/root/test-file.txt ./test-file.txt
+```
+
+Use a non-default port:
+
+```bash
+python -m simple_ssh_copy ./test-file.txt root@192.168.1.10:2222:/home/root/test-file.txt
+```
+
+Use an explicit private key:
+
+```bash
+python -m simple_ssh_copy -i ~/.ssh/id_rsa ./test-file.txt root@192.168.1.10:/home/root/test-file.txt
+```
+
+On Windows:
+
+```powershell
+python -m simple_ssh_copy -i C:\Users\neko\.ssh\id_rsa .\test-file.txt root@169.254.115.127:/home/root/test-file.txt
+```
+
+Increase the SSH timeout:
+
+```bash
+python -m simple_ssh_copy --timeout 60 ./test-file.txt root@192.168.1.10:/home/root/test-file.txt
+```
+
+When prompted for a password, press Enter for empty-password or key-only login.
+In that case the client also tries SSH agent and keys discoverable in `~/.ssh`.
+
+## Python API
 
 ```python
 import simple_ssh_copy
 
-HOSTNAME = "..."
-USERNAME = "..."
-PASSWORD = "..."
+hostname = "192.168.1.10"
+username = "root"
+password = ""
 
-# download file list
-REMOTE_PATH = "..."
-LOCAL_PATH = "..."
-simple_ssh_copy.download(HOSTNAME, USERNAME, PASSWORD, [(REMOTE_PATH, LOCAL_PATH)])
+simple_ssh_copy.upload(
+    hostname=hostname,
+    username=username,
+    password=password,
+    files=[("./test-file.txt", "/home/root/test-file.txt")],
+    key_filename="~/.ssh/id_rsa",
+)
 
-# upload file list
-REMOTE_PATH = "..."
-LOCAL_PATH = "..."
-simple_ssh_copy.upload(HOSTNAME, USERNAME, PASSWORD, [(LOCAL_PATH, REMOTE_PATH)])
+simple_ssh_copy.download(
+    hostname=hostname,
+    username=username,
+    password=password,
+    files=[("/home/root/test-file.txt", "./test-file.txt")],
+    key_filename="~/.ssh/id_rsa",
+)
 
-# download dir
-REMOTE_DIR = ".."
-LOCAL_DIR = "..."
-simple_ssh_copy.download_dir(HOSTNAME, USERNAME, PASSWORD, REMOTE_DIR, LOCAL_DIR)
+simple_ssh_copy.download_dir(
+    hostname=hostname,
+    username=username,
+    password=password,
+    remote_dir="/home/root/logs",
+    local_dir="./logs",
+    key_filename="~/.ssh/id_rsa",
+)
 ```
 
-### Command Line
+Run a remote command with the low-level client:
+
+```python
+from simple_ssh_copy import SimpleSSHClient
+
+with SimpleSSHClient(
+    hostname="192.168.1.10",
+    username="root",
+    password="",
+    key_filename="~/.ssh/id_rsa",
+) as ssh:
+    code, stdout, stderr = ssh.exec_cmd("uname -a")
+```
+
+## Legacy SSH Notes
+
+Some old devices require options like:
 
 ```bash
-# Upload file via ssh-rsa
-python3 -m simple_ssh_copy <local_file> <user>@<host_ip>:<remote_path>
-
-# Download file via ssh-rsa
-python3 -m simple_ssh_copy <user>@<host_ip>:<remote_path> <local_file>
+ssh -o HostKeyAlgorithms=+ssh-rsa \
+    -o MACs=+hmac-sha1-96,hmac-sha1,hmac-md5 \
+    -i ~/.ssh/id_rsa root@192.168.1.10
 ```
+
+`simple_ssh_copy` enables the Paramiko equivalents by default, so the matching
+file-transfer command is usually:
+
+```bash
+python -m simple_ssh_copy -i ~/.ssh/id_rsa ./file root@192.168.1.10:/tmp/file
+```
+
+If you need stricter modern SSH behavior, pass
+`allow_ssh_rsa_host_key=False` from the Python API.
+
+## Path Format
+
+Remote paths use one of these formats:
+
+```text
+user@host:/remote/path
+user@host:port:/remote/path
+```
+
+Only local-to-remote and remote-to-local transfers are supported. Remote-to-
+remote transfers are not supported.
+
+## Limitations
+
+- The remote host must provide a POSIX-like shell.
+- Upload uses `mkdir`, `rm`, `touch`, and `printf` on the remote host.
+- Download uses `stat`, `dd`, and `find` for directory downloads.
+- Directory upload is not implemented.
+- Very large uploads may be slower than real SCP/SFTP because data is written
+  through remote shell commands.

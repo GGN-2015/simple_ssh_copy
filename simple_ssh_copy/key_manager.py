@@ -4,7 +4,6 @@ from paramiko.ed25519key import Ed25519Key
 from paramiko.rsakey import RSAKey
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
-import io
 
 try:
     from . import utils
@@ -54,8 +53,8 @@ def load_rsa_key():
 def load_ed25519_key():
     return Ed25519Key.from_private_key_file(ED25519_PRIVATE)
 
+init_id_rsa()
+init_id_ed25519()
 if __name__ == "__main__":
-    init_id_rsa()
-    init_id_ed25519()
     print(load_rsa_key().fingerprint)
     print(load_ed25519_key().fingerprint)
