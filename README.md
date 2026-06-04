@@ -155,7 +155,7 @@ remote transfers are not supported.
 ## Limitations
 
 - The remote host must provide a POSIX-like shell.
-- Upload uses `mkdir`, `rm`, `touch`, and `printf` on the remote host.
+- Upload uses `mkdir` and `cat` on the remote host.
 - Download uses `stat`, `dd`, and `find` for directory downloads.
 - Directory upload is not implemented.
 - Very large uploads may be slower than real SCP/SFTP because data is written

@@ -1,5 +1,7 @@
 from tqdm import tqdm
 import os
+import posixpath
+import shlex
 
 try:
     from .SimpleSSHClient import SimpleSSHClient
@@ -16,37 +18,71 @@ def get_file_total_size(fpin) -> int:
     return total
 
 
-def upload_files_with_ssh_client(ssh_client: SimpleSSHClient, files: list[tuple[str, str]], block_siz: int = 12 * 1024):
-    block_siz = min(block_siz, 12 * 1024)
+def _check_remote_command(ssh_client: SimpleSSHClient, command: str) -> None:
+    code, _, error = ssh_client.exec_cmd(command)
+    if code != 0:
+        message = error.decode(errors="replace").strip()
+        raise RuntimeError(message or f"remote command failed with exit code {code}: {command}")
 
-    for local_path, remote_path in files:
-        aim_dir = "/".join(remote_path.split("/")[:-1])
-        ssh_client.exec_cmd(f"mkdir -p '{aim_dir}'")
-        ssh_client.exec_cmd(f"rm -rf '{remote_path}'")
-        ssh_client.exec_cmd(f"touch '{remote_path}'")
 
-        with open(local_path, "rb") as fpin:
-            total = get_file_total_size(fpin)
+def _upload_file_with_stdin(
+        ssh_client: SimpleSSHClient,
+        local_path: str,
+        remote_path: str,
+        block_siz: int) -> None:
+    with open(local_path, "rb") as fpin:
+        total = get_file_total_size(fpin)
 
-            pbar = None
-            if total > 0:
-                pbar = tqdm(total=total, unit="B", unit_scale=True, desc=f"{local_path}")
-            else:
-                print(f"{local_path}: empty file.")
+        pbar = None
+        if total > 0:
+            pbar = tqdm(total=total, unit="B", unit_scale=True, desc=f"{local_path}")
+        else:
+            print(f"{local_path}: empty file.")
 
+        stdin, stdout, stderr = ssh_client.ssh_client.exec_command(
+            f"command cat > {shlex.quote(remote_path)}"
+        )
+        channel = stdin.channel
+
+        try:
             while True:
                 data_buf = fpin.read(block_siz)
                 if not data_buf:
                     break
 
+                channel.sendall(data_buf)
                 if pbar is not None:
                     pbar.update(len(data_buf))
 
-                cmd_now = "command printf '" + ("".join([f"\\{chr_val:03o}" for chr_val in data_buf])) + f"' >> '{remote_path}'"
-                ssh_client.exec_cmd(cmd_now)
-
+            channel.shutdown_write()
+            output = stdout.read()
+            error = stderr.read()
+            code = stdout.channel.recv_exit_status()
+        finally:
             if pbar is not None:
                 pbar.close()
+
+        if code != 0:
+            message = error.decode(errors="replace").strip()
+            if output:
+                output_text = output.decode(errors="replace").strip()
+                message = f"{message}\n{output_text}".strip()
+            raise RuntimeError(message or f"failed to upload {local_path} to {remote_path}")
+
+
+def upload_files_with_ssh_client(ssh_client: SimpleSSHClient, files: list[tuple[str, str]], block_siz: int = 12 * 1024):
+    block_siz = max(1, block_siz)
+
+    for local_path, remote_path in files:
+        aim_dir = posixpath.dirname(remote_path)
+        if aim_dir:
+            _check_remote_command(ssh_client, f"mkdir -p {shlex.quote(aim_dir)}")
+
+        _upload_file_with_stdin(
+            ssh_client,
+            local_path,
+            remote_path,
+            block_siz)
 
 
 def upload(
@@ -62,7 +98,7 @@ def upload(
         look_for_keys: bool | None = None,
         key_filename: str | list[str] | None = None):
     
-    block_siz = min(block_siz, 12 * 1024)
+    block_siz = max(1, block_siz)
     with SimpleSSHClient(
             hostname,
             username,
