@@ -1,12 +1,16 @@
 from tqdm import tqdm
+import base64
 import os
 import posixpath
 import shlex
+import uuid
 
 try:
     from .SimpleSSHClient import SimpleSSHClient
+    from .errors import UnsupportedRemoteShellError
 except:
     from SimpleSSHClient import SimpleSSHClient
+    from errors import UnsupportedRemoteShellError
 
 
 def get_file_total_size(fpin) -> int:
@@ -25,11 +29,136 @@ def _check_remote_command(ssh_client: SimpleSSHClient, command: str) -> None:
         raise RuntimeError(message or f"remote command failed with exit code {code}: {command}")
 
 
-def _upload_file_with_stdin(
+def _check_posix_remote_shell(ssh_client: SimpleSSHClient) -> None:
+    command = "printf %s simple_ssh_copy_posix_shell_ok"
+    code, output, _ = ssh_client.exec_cmd(command)
+    if code != 0 or output.strip() != b"simple_ssh_copy_posix_shell_ok":
+        raise UnsupportedRemoteShellError("POSIX-like remote shell is required.")
+
+
+def _check_remote_base64_decoder(ssh_client: SimpleSSHClient) -> None:
+    command = "printf '' | command base64 -d >/dev/null"
+    code, _, error = ssh_client.exec_cmd(command)
+    if code != 0:
+        message = error.decode(errors="replace").strip()
+        if message:
+            raise RuntimeError(f"remote base64 decoder is required for upload: {message}")
+        raise RuntimeError("remote base64 decoder is required for upload")
+
+
+def _run_remote_command(ssh_client: SimpleSSHClient, command: str) -> tuple[bytes, bytes]:
+    code, output, error = ssh_client.exec_cmd(command)
+    if code != 0:
+        message = error.decode(errors="replace").strip()
+        if output:
+            output_text = output.decode(errors="replace").strip()
+            message = f"{message}\n{output_text}".strip()
+        raise RuntimeError(message or f"remote command failed with exit code {code}: {command}")
+
+    return output, error
+
+
+def _run_bounded_remote_command(
+        ssh_client: SimpleSSHClient,
+        command: str,
+        block_siz: int) -> tuple[bytes, bytes]:
+    command_len = len(command.encode("utf-8"))
+    if command_len > block_siz:
+        raise RuntimeError(f"upload command exceeded block_siz={block_siz}: {command_len}")
+    return _run_remote_command(ssh_client, command)
+
+
+def _cleanup_remote_temp_file(
+        ssh_client: SimpleSSHClient,
+        remote_tmp_path: str,
+        block_siz: int,
+        raise_on_failure: bool) -> None:
+    quoted_tmp_path = shlex.quote(remote_tmp_path)
+    try:
+        _run_bounded_remote_command(ssh_client, f"rm -f {quoted_tmp_path}", block_siz)
+    except Exception:
+        if raise_on_failure:
+            raise
+
+
+def _max_base64_payload_length(command_prefix: str, command_suffix: str, block_siz: int) -> int:
+    overhead = len(command_prefix.encode("utf-8")) + len(command_suffix.encode("utf-8"))
+    available = block_siz - overhead
+    if available < 4:
+        raise ValueError("block_siz is too small for upload command overhead")
+    return available - (available % 4)
+
+
+def _append_base64_to_remote_file(
+        ssh_client: SimpleSSHClient,
+        remote_tmp_path: str,
+        encoded_data: bytes,
+        block_siz: int) -> None:
+    quoted_tmp_path = shlex.quote(remote_tmp_path)
+    command_prefix = "printf %s "
+    command_suffix = f" >> {quoted_tmp_path}"
+    max_payload_len = _max_base64_payload_length(command_prefix, command_suffix, block_siz)
+    encoded_text = encoded_data.decode("ascii")
+
+    for offset in range(0, len(encoded_text), max_payload_len):
+        payload = encoded_text[offset:offset + max_payload_len]
+        command = f"{command_prefix}{shlex.quote(payload)}{command_suffix}"
+        _run_bounded_remote_command(ssh_client, command, block_siz)
+
+
+def _write_base64_temp_file(
+        ssh_client: SimpleSSHClient,
+        fpin,
+        remote_tmp_path: str,
+        block_siz: int,
+        pbar) -> None:
+    pending = b""
+
+    while True:
+        data_buf = fpin.read(block_siz)
+        if not data_buf:
+            break
+
+        data_buf = pending + data_buf
+        encodable_len = len(data_buf) - (len(data_buf) % 3)
+
+        if encodable_len:
+            raw_chunk = data_buf[:encodable_len]
+            _append_base64_to_remote_file(
+                ssh_client,
+                remote_tmp_path,
+                base64.b64encode(raw_chunk),
+                block_siz)
+            if pbar is not None:
+                pbar.update(len(raw_chunk))
+
+        pending = data_buf[encodable_len:]
+
+    if pending:
+        _append_base64_to_remote_file(
+            ssh_client,
+            remote_tmp_path,
+            base64.b64encode(pending),
+            block_siz)
+        if pbar is not None:
+            pbar.update(len(pending))
+
+
+def _make_remote_tmp_path(remote_path: str) -> str:
+    remote_dir = posixpath.dirname(remote_path) or "."
+    token = uuid.uuid4().hex
+    return posixpath.join(remote_dir, f".ssc-{token}.b64")
+
+
+def _upload_file_with_commands(
         ssh_client: SimpleSSHClient,
         local_path: str,
         remote_path: str,
         block_siz: int) -> None:
+    remote_tmp_path = _make_remote_tmp_path(remote_path)
+    quoted_tmp_path = shlex.quote(remote_tmp_path)
+    quoted_remote_path = shlex.quote(remote_path)
+
     with open(local_path, "rb") as fpin:
         total = get_file_total_size(fpin)
 
@@ -39,46 +168,37 @@ def _upload_file_with_stdin(
         else:
             print(f"{local_path}: empty file.")
 
-        stdin, stdout, stderr = ssh_client.ssh_client.exec_command(
-            f"command cat > {shlex.quote(remote_path)}"
-        )
-        channel = stdin.channel
-
+        completed = False
         try:
-            while True:
-                data_buf = fpin.read(block_siz)
-                if not data_buf:
-                    break
-
-                channel.sendall(data_buf)
-                if pbar is not None:
-                    pbar.update(len(data_buf))
-
-            channel.shutdown_write()
-            output = stdout.read()
-            error = stderr.read()
-            code = stdout.channel.recv_exit_status()
+            _run_bounded_remote_command(ssh_client, f": > {quoted_tmp_path}", block_siz)
+            _write_base64_temp_file(ssh_client, fpin, remote_tmp_path, block_siz, pbar)
+            _run_bounded_remote_command(
+                ssh_client,
+                f"command base64 -d {quoted_tmp_path} > {quoted_remote_path}",
+                block_siz)
+            completed = True
         finally:
             if pbar is not None:
                 pbar.close()
-
-        if code != 0:
-            message = error.decode(errors="replace").strip()
-            if output:
-                output_text = output.decode(errors="replace").strip()
-                message = f"{message}\n{output_text}".strip()
-            raise RuntimeError(message or f"failed to upload {local_path} to {remote_path}")
+            _cleanup_remote_temp_file(
+                ssh_client,
+                remote_tmp_path,
+                block_siz,
+                raise_on_failure=completed)
 
 
-def upload_files_with_ssh_client(ssh_client: SimpleSSHClient, files: list[tuple[str, str]], block_siz: int = 1024):
+def upload_files_with_ssh_client(ssh_client: SimpleSSHClient, files: list[tuple[str, str]], block_siz: int = 4096):
     block_siz = max(1, block_siz)
+    if files:
+        _check_posix_remote_shell(ssh_client)
+        _check_remote_base64_decoder(ssh_client)
 
     for local_path, remote_path in files:
         aim_dir = posixpath.dirname(remote_path)
         if aim_dir:
             _check_remote_command(ssh_client, f"mkdir -p {shlex.quote(aim_dir)}")
 
-        _upload_file_with_stdin(
+        _upload_file_with_commands(
             ssh_client,
             local_path,
             remote_path,
@@ -90,7 +210,7 @@ def upload(
         username: str,
         password: str | None,
         files: list[tuple[str, str]],
-        block_siz: int = 1024,
+        block_siz: int = 4096,
         port: int = 22,
         timeout: float = 15,
         allow_ssh_rsa_host_key: bool = True,

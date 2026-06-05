@@ -3,6 +3,7 @@ import argparse
 import getpass
 import paramiko
 from . import upload, download
+from .errors import UnsupportedRemoteShellError
 
 
 def _authentication_error_message(exc: Exception) -> str:
@@ -113,6 +114,12 @@ def main() -> int:
     except paramiko.AuthenticationException as exc:
         print(_authentication_error_message(exc), file=sys.stderr)
         return 1
+    except UnsupportedRemoteShellError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("Error: Interrupted by user.", file=sys.stderr)
+        return 130
 
     print("Error: Unsupported transfer mode", file=sys.stderr)
     return 1

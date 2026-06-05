@@ -1,10 +1,10 @@
 # simple_ssh_copy
 
-Transfer files to and from small or old Linux devices over SSH.
+Transfer files to and from small or old POSIX-like devices over SSH.
 
 This package intentionally avoids SFTP/SCP subsystems. It only needs a working
-SSH login and a few basic remote shell commands, so it is useful for minimal
-systems, embedded devices, rescue environments, and older SSH servers.
+SSH login and a few basic POSIX shell commands, so it is useful for minimal
+Linux systems, embedded devices, rescue environments, and older SSH servers.
 
 ## Features
 
@@ -17,6 +17,9 @@ systems, embedded devices, rescue environments, and older SSH servers.
   - `HostKeyAlgorithms=+ssh-rsa`
   - RSA public-key signing with `ssh-rsa`
   - `MACs=+hmac-sha1-96,hmac-sha1,hmac-md5`
+
+For implementation notes, transfer flow, block sizes, and compatibility
+details, see [Technical Details](docs/technical-details.md).
 
 ## Install
 
@@ -155,7 +158,11 @@ remote transfers are not supported.
 ## Limitations
 
 - The remote host must provide a POSIX-like shell.
-- Upload uses `mkdir` and `cat` on the remote host.
+- Non-POSIX SSH servers, such as Windows command-shell SSH sessions, are not
+  supported and fail with a clear error.
+- Upload uses `mkdir` and `base64` on the remote host.
+- Upload sends base64 fragments through bounded remote commands, then decodes
+  the assembled temporary file on the remote host.
 - Download uses `stat`, `dd`, and `find` for directory downloads.
 - Directory upload is not implemented.
 - Very large uploads may be slower than real SCP/SFTP because data is written
