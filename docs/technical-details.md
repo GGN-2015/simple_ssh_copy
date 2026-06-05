@@ -92,6 +92,23 @@ remote upload command string. It is not a `channel.sendall(...)` size limit.
 Payload fragments are sized so the complete `printf %s ... >> <temp>` command
 stays within that limit.
 
+The high-level `upload()` API probes this limit before opening the real upload
+connection. It creates a separate experimental SSH connection and runs a
+no-op command whose UTF-8 length is exactly the requested `block_siz`. If that
+probe command resets the SSH connection, the client closes that experimental
+connection, halves `block_siz`, and retries with a new experimental connection.
+This continues until a probe succeeds. If the probe still fails after
+`block_siz` falls below `64`, the upload is rejected as unusable for this SSH
+connection.
+
+When the successful probed value differs from the requested or default
+`block_siz`, the client prints a warning to stderr with the actual value it will
+use for the upload.
+
+The lower-level `upload_files_with_ssh_client()` API receives an already-open
+SSH client and therefore does not open extra probe connections. Callers using
+that lower-level API are responsible for choosing a suitable `block_siz`.
+
 Upload progress is based on the local file size. Empty files are detected and
 reported without creating a progress bar.
 
@@ -201,6 +218,10 @@ available.
 For command-line use, `KeyboardInterrupt` is caught and reported as a short
 user-facing interruption message instead of a Python traceback. Upload cleanup
 still runs before that error reaches the CLI boundary.
+
+If repeated upload command-size probes fail down to the minimum size, the CLI
+prints a short SSH-connection usability error instead of exposing the Paramiko
+or socket traceback.
 
 Download loops treat an empty `dd` result as end-of-file. The remote file size
 is used for progress reporting, but the data loop is driven by bytes returned

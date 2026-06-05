@@ -3,14 +3,16 @@ import base64
 import os
 import posixpath
 import shlex
+import socket
+import sys
 import uuid
 
 try:
     from .SimpleSSHClient import SimpleSSHClient
-    from .errors import UnsupportedRemoteShellError
+    from .errors import UnsupportedRemoteShellError, UnusableSSHConnectionError
 except:
     from SimpleSSHClient import SimpleSSHClient
-    from errors import UnsupportedRemoteShellError
+    from errors import UnsupportedRemoteShellError, UnusableSSHConnectionError
 
 
 def get_file_total_size(fpin) -> int:
@@ -66,6 +68,70 @@ def _run_bounded_remote_command(
     if command_len > block_siz:
         raise RuntimeError(f"upload command exceeded block_siz={block_siz}: {command_len}")
     return _run_remote_command(ssh_client, command)
+
+
+def _is_connection_reset_error(exc: BaseException) -> bool:
+    if isinstance(exc, ConnectionResetError):
+        return True
+    if isinstance(exc, socket.error) and getattr(exc, "errno", None) in (10054, 104):
+        return True
+    return any(_is_connection_reset_error(arg) for arg in getattr(exc, "args", ()) if isinstance(arg, BaseException))
+
+
+def _make_block_size_probe_command(block_siz: int) -> str:
+    prefix = "true # "
+    filler_len = block_siz - len(prefix.encode("utf-8"))
+    if filler_len < 0:
+        raise ValueError("block_siz is too small for upload command overhead")
+    return prefix + ("x" * filler_len)
+
+
+def probe_upload_block_size(
+        hostname: str,
+        username: str,
+        password: str | None,
+        block_siz: int,
+        port: int = 22,
+        timeout: float = 15,
+        allow_ssh_rsa_host_key: bool = True,
+        allow_agent: bool | None = None,
+        look_for_keys: bool | None = None,
+        key_filename: str | list[str] | None = None,
+        minimum_block_siz: int = 64) -> int:
+    block_siz = max(1, block_siz)
+    while block_siz >= minimum_block_siz:
+        try:
+            with SimpleSSHClient(
+                    hostname,
+                    username,
+                    password,
+                    port,
+                    timeout,
+                    allow_ssh_rsa_host_key,
+                    allow_agent,
+                    look_for_keys,
+                    key_filename) as ssh_client:
+                _check_posix_remote_shell(ssh_client)
+                _run_bounded_remote_command(
+                    ssh_client,
+                    _make_block_size_probe_command(block_siz),
+                    block_siz)
+            return block_siz
+        except Exception as exc:
+            if not _is_connection_reset_error(exc):
+                raise
+            block_siz //= 2
+
+    raise UnusableSSHConnectionError(
+        f"SSH connection cannot carry upload commands smaller than {minimum_block_siz} bytes")
+
+
+def _report_adjusted_block_size(requested_block_siz: int, actual_block_siz: int) -> None:
+    if actual_block_siz != requested_block_siz:
+        print(
+            f"Warning: using upload block_siz={actual_block_siz} "
+            f"after SSH command-size probe; requested block_siz={requested_block_siz}.",
+            file=sys.stderr)
 
 
 def _cleanup_remote_temp_file(
@@ -218,7 +284,20 @@ def upload(
         look_for_keys: bool | None = None,
         key_filename: str | list[str] | None = None):
     
-    block_siz = max(1, block_siz)
+    requested_block_siz = max(1, block_siz)
+    block_siz = probe_upload_block_size(
+        hostname,
+        username,
+        password,
+        requested_block_siz,
+        port,
+        timeout,
+        allow_ssh_rsa_host_key,
+        allow_agent,
+        look_for_keys,
+        key_filename)
+    _report_adjusted_block_size(requested_block_siz, block_siz)
+
     with SimpleSSHClient(
             hostname,
             username,

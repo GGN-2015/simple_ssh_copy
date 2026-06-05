@@ -1,17 +1,22 @@
 import base64
+import importlib
+import io
 import os
 import shlex
 import sys
 import tempfile
 import types
 import unittest
+from contextlib import redirect_stderr
+from unittest import mock
 
 simple_ssh_client_module = types.ModuleType("simple_ssh_copy.SimpleSSHClient")
 simple_ssh_client_module.SimpleSSHClient = object
 sys.modules["simple_ssh_copy.SimpleSSHClient"] = simple_ssh_client_module
 
 from simple_ssh_copy.upload import upload_files_with_ssh_client
-from simple_ssh_copy.errors import UnsupportedRemoteShellError
+upload_module = importlib.import_module("simple_ssh_copy.upload")
+from simple_ssh_copy.errors import UnsupportedRemoteShellError, UnusableSSHConnectionError
 
 
 class FakeSSHClient:
@@ -64,6 +69,27 @@ class FakeSSHClient:
             return 0, b"", b""
 
         return 1, b"", f"unexpected command: {command}".encode()
+
+
+class ProbeContext:
+    def __init__(self, attempts, failing_block_sizes):
+        self.attempts = attempts
+        self.failing_block_sizes = failing_block_sizes
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+    def exec_cmd(self, command):
+        if command == "printf %s simple_ssh_copy_posix_shell_ok":
+            return 0, b"simple_ssh_copy_posix_shell_ok", b""
+
+        self.attempts.append(len(command.encode("utf-8")))
+        if len(command.encode("utf-8")) in self.failing_block_sizes:
+            raise ConnectionResetError(10054, "connection reset")
+        return 0, b"", b""
 
 
 class UploadTests(unittest.TestCase):
@@ -174,6 +200,82 @@ class UploadTests(unittest.TestCase):
         self.assertEqual(ssh_client.remote_files, {})
         self.assertNotIn("/tmp/target.bin", ssh_client.decoded_files)
         self.assertTrue(any(command.startswith("rm -f /tmp/.ssc-") for command in ssh_client.commands))
+
+    def test_upload_halves_block_size_after_connection_reset_probe(self):
+        attempts = []
+        used_block_sizes = []
+
+        def fake_simple_ssh_client(*args, **kwargs):
+            return ProbeContext(attempts, {4096, 2048})
+
+        def fake_upload_files_with_ssh_client(ssh_client, files, block_siz):
+            used_block_sizes.append(block_siz)
+
+        with mock.patch.object(upload_module, "SimpleSSHClient", side_effect=fake_simple_ssh_client):
+            with mock.patch.object(
+                    upload_module,
+                    "upload_files_with_ssh_client",
+                    side_effect=fake_upload_files_with_ssh_client):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    upload_module.upload(
+                        hostname="example.com",
+                        username="ubuntu",
+                        password="password",
+                        files=[("local.txt", "/tmp/remote.txt")],
+                        block_siz=4096)
+
+        self.assertEqual(attempts, [4096, 2048, 1024])
+        self.assertEqual(used_block_sizes, [1024])
+        self.assertEqual(
+            stderr.getvalue(),
+            "Warning: using upload block_siz=1024 after SSH command-size probe; "
+            "requested block_siz=4096.\n")
+
+    def test_upload_does_not_report_block_size_when_probe_keeps_requested_size(self):
+        attempts = []
+
+        def fake_simple_ssh_client(*args, **kwargs):
+            return ProbeContext(attempts, set())
+
+        def fake_upload_files_with_ssh_client(ssh_client, files, block_siz):
+            self.assertEqual(block_siz, 4096)
+
+        with mock.patch.object(upload_module, "SimpleSSHClient", side_effect=fake_simple_ssh_client):
+            with mock.patch.object(
+                    upload_module,
+                    "upload_files_with_ssh_client",
+                    side_effect=fake_upload_files_with_ssh_client):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    upload_module.upload(
+                        hostname="example.com",
+                        username="ubuntu",
+                        password="password",
+                        files=[("local.txt", "/tmp/remote.txt")],
+                        block_siz=4096)
+
+        self.assertEqual(attempts, [4096])
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_upload_reports_unusable_connection_below_minimum_block_size(self):
+        attempts = []
+
+        def fake_simple_ssh_client(*args, **kwargs):
+            return ProbeContext(attempts, {4096, 2048, 1024, 512, 256, 128, 64})
+
+        with mock.patch.object(upload_module, "SimpleSSHClient", side_effect=fake_simple_ssh_client):
+            with self.assertRaisesRegex(
+                    UnusableSSHConnectionError,
+                    "SSH connection cannot carry upload commands smaller than 64 bytes"):
+                upload_module.upload(
+                    hostname="example.com",
+                    username="ubuntu",
+                    password="password",
+                    files=[("local.txt", "/tmp/remote.txt")],
+                    block_siz=4096)
+
+        self.assertEqual(attempts, [4096, 2048, 1024, 512, 256, 128, 64])
 
 
 if __name__ == "__main__":

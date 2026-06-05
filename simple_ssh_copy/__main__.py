@@ -3,7 +3,7 @@ import argparse
 import getpass
 import paramiko
 from . import upload, download
-from .errors import UnsupportedRemoteShellError
+from .errors import UnsupportedRemoteShellError, UnusableSSHConnectionError
 
 
 def _authentication_error_message(exc: Exception) -> str:
@@ -115,6 +115,9 @@ def main() -> int:
         print(_authentication_error_message(exc), file=sys.stderr)
         return 1
     except UnsupportedRemoteShellError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except UnusableSSHConnectionError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
