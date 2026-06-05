@@ -78,6 +78,11 @@ def _is_connection_reset_error(exc: BaseException) -> bool:
     return any(_is_connection_reset_error(arg) for arg in getattr(exc, "args", ()) if isinstance(arg, BaseException))
 
 
+def _is_upload_command_too_large_error(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return "argument list too long" in message
+
+
 def _make_block_size_probe_command(block_siz: int) -> str:
     prefix = "true # "
     filler_len = block_siz - len(prefix.encode("utf-8"))
@@ -118,7 +123,9 @@ def probe_upload_block_size(
                     block_siz)
             return block_siz
         except Exception as exc:
-            if not _is_connection_reset_error(exc):
+            if not (
+                    _is_connection_reset_error(exc)
+                    or _is_upload_command_too_large_error(exc)):
                 raise
             block_siz //= 2
 

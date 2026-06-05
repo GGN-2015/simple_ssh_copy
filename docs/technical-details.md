@@ -95,11 +95,11 @@ stays within that limit.
 The high-level `upload()` API probes this limit before opening the real upload
 connection. It creates a separate experimental SSH connection and runs a
 no-op command whose UTF-8 length is exactly the requested `block_siz`. If that
-probe command resets the SSH connection, the client closes that experimental
-connection, halves `block_siz`, and retries with a new experimental connection.
-This continues until a probe succeeds. If the probe still fails after
-`block_siz` falls below `64`, the upload is rejected as unusable for this SSH
-connection.
+probe command resets the SSH connection or the remote shell reports
+`Argument list too long`, the client closes that experimental connection,
+halves `block_siz`, and retries with a new experimental connection. This
+continues until a probe succeeds. If the probe still fails after `block_siz`
+falls below `64`, the upload is rejected as unusable for this SSH connection.
 
 When the successful probed value differs from the requested or default
 `block_siz`, the client prints a warning to stderr with the actual value it will
