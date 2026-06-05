@@ -1,7 +1,18 @@
 import sys
 import argparse
 import getpass
+import paramiko
 from . import upload, download
+
+
+def _authentication_error_message(exc: Exception) -> str:
+    message = str(exc).strip()
+    if not message:
+        return "Error: Authentication failed."
+    if message.lower().rstrip(".") == "authentication failed":
+        return "Error: Authentication failed."
+    return f"Error: Authentication failed: {message}"
+
 
 def parse_remote_path(path):
     if "@" not in path:
@@ -70,34 +81,38 @@ def main() -> int:
         print("Error: At least one remote path user@host:path is required", file=sys.stderr)
         return 1
 
-    # Local upload to remote
-    if not src_remote and dst_remote:
-        user, host, port, remote_path = parse_remote_path(dst)
-        password = getpass.getpass(f"{user}@{host}'s password: ")
-        upload(
-            hostname=host,
-            port=port,
-            username=user,
-            password=password,
-            files=[(src, remote_path)],
-            timeout=args.timeout,
-            key_filename=args.identity_file)
-        return 0
+    try:
+        # Local upload to remote
+        if not src_remote and dst_remote:
+            user, host, port, remote_path = parse_remote_path(dst)
+            password = getpass.getpass(f"{user}@{host}'s password: ")
+            upload(
+                hostname=host,
+                port=port,
+                username=user,
+                password=password,
+                files=[(src, remote_path)],
+                timeout=args.timeout,
+                key_filename=args.identity_file)
+            return 0
 
-    # Remote download to local
-    elif src_remote and not dst_remote:
-        user, host, port, remote_path = parse_remote_path(src)
-        local_path = dst
-        password = getpass.getpass(f"{user}@{host}'s password: ")
-        download(
-            hostname=host,
-            port=port,
-            username=user,
-            password=password,
-            files=[(remote_path, local_path)],
-            timeout=args.timeout,
-            key_filename=args.identity_file)
-        return 0
+        # Remote download to local
+        elif src_remote and not dst_remote:
+            user, host, port, remote_path = parse_remote_path(src)
+            local_path = dst
+            password = getpass.getpass(f"{user}@{host}'s password: ")
+            download(
+                hostname=host,
+                port=port,
+                username=user,
+                password=password,
+                files=[(remote_path, local_path)],
+                timeout=args.timeout,
+                key_filename=args.identity_file)
+            return 0
+    except paramiko.AuthenticationException as exc:
+        print(_authentication_error_message(exc), file=sys.stderr)
+        return 1
 
     print("Error: Unsupported transfer mode", file=sys.stderr)
     return 1

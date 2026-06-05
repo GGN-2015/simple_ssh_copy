@@ -70,7 +70,7 @@ def _upload_file_with_stdin(
             raise RuntimeError(message or f"failed to upload {local_path} to {remote_path}")
 
 
-def upload_files_with_ssh_client(ssh_client: SimpleSSHClient, files: list[tuple[str, str]], block_siz: int = 12 * 1024):
+def upload_files_with_ssh_client(ssh_client: SimpleSSHClient, files: list[tuple[str, str]], block_siz: int = 1024):
     block_siz = max(1, block_siz)
 
     for local_path, remote_path in files:
@@ -90,7 +90,7 @@ def upload(
         username: str,
         password: str | None,
         files: list[tuple[str, str]],
-        block_siz: int = 12 * 1024,
+        block_siz: int = 1024,
         port: int = 22,
         timeout: float = 15,
         allow_ssh_rsa_host_key: bool = True,
