@@ -10,6 +10,10 @@ except:
 
 
 def download_files_with_ssh_client(ssh_client: SimpleSSHClient, files: list[tuple[str, str]], block_size: int = 1024 * 1024):
+    if files:
+        utils.ensure_remote_is_not_windows(ssh_client)
+        utils.report_remote_architecture(ssh_client)
+
     for remote_path, local_path in files:
         # Get absolute path
         if not os.path.isabs(local_path):

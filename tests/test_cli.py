@@ -7,7 +7,11 @@ from unittest import mock
 import paramiko
 
 from simple_ssh_copy import __main__ as cli
-from simple_ssh_copy.errors import UnsupportedRemoteShellError, UnusableSSHConnectionError
+from simple_ssh_copy.errors import (
+    UnsupportedRemoteShellError,
+    UnsupportedRemoteSystemError,
+    UnusableSSHConnectionError,
+)
 
 
 class CLITests(unittest.TestCase):
@@ -76,6 +80,63 @@ class CLITests(unittest.TestCase):
         output = stderr.getvalue()
         self.assertEqual(code, 130)
         self.assertEqual(output, "Error: Interrupted by user.\n")
+        self.assertNotIn("Traceback", output)
+
+    def test_unsupported_remote_system_warning_is_not_duplicated(self):
+        with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "python -m simple_ssh_copy",
+                    "test-file.txt",
+                    "ubuntu@example.com:/home/ubuntu/test-file.txt",
+                ]):
+            with mock.patch.object(cli.getpass, "getpass", return_value="password"):
+                with mock.patch.object(
+                        cli,
+                        "upload",
+                        side_effect=UnsupportedRemoteSystemError(
+                            "Warning: Windows remote systems are not supported. "
+                            "simple_ssh_copy only supports POSIX-like remote systems. "
+                            "Transfer aborted.",
+                            warning_printed=True)):
+                    stderr = io.StringIO()
+                    with redirect_stderr(stderr):
+                        code = cli.main()
+
+        output = stderr.getvalue()
+        self.assertEqual(code, 1)
+        self.assertEqual(output, "")
+        self.assertNotIn("Traceback", output)
+
+    def test_unsupported_remote_system_warning_is_yellow(self):
+        with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "python -m simple_ssh_copy",
+                    "test-file.txt",
+                    "ubuntu@example.com:/home/ubuntu/test-file.txt",
+                ]):
+            with mock.patch.object(cli.getpass, "getpass", return_value="password"):
+                with mock.patch.object(
+                        cli,
+                        "upload",
+                        side_effect=UnsupportedRemoteSystemError(
+                            "Warning: Windows remote systems are not supported. "
+                            "simple_ssh_copy only supports POSIX-like remote systems. "
+                            "Transfer aborted.")):
+                    stderr = io.StringIO()
+                    with redirect_stderr(stderr):
+                        code = cli.main()
+
+        output = stderr.getvalue()
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            output,
+            "\033[33mWarning: Windows remote systems are not supported. "
+            "simple_ssh_copy only supports POSIX-like remote systems. "
+            "Transfer aborted.\033[0m\n")
         self.assertNotIn("Traceback", output)
 
     def test_unusable_ssh_connection_is_reported_without_traceback(self):

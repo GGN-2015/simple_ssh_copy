@@ -16,7 +16,11 @@ sys.modules["simple_ssh_copy.SimpleSSHClient"] = simple_ssh_client_module
 
 from simple_ssh_copy.upload import upload_files_with_ssh_client
 upload_module = importlib.import_module("simple_ssh_copy.upload")
-from simple_ssh_copy.errors import UnsupportedRemoteShellError, UnusableSSHConnectionError
+from simple_ssh_copy.errors import (
+    UnsupportedRemoteShellError,
+    UnsupportedRemoteSystemError,
+    UnusableSSHConnectionError,
+)
 
 
 class FakeSSHClient:
@@ -32,6 +36,12 @@ class FakeSSHClient:
 
         if command == "printf %s simple_ssh_copy_posix_shell_ok":
             return 0, b"simple_ssh_copy_posix_shell_ok", b""
+
+        if command == "uname -s":
+            return 0, b"Linux\n", b""
+
+        if command == "uname -m 2>/dev/null || printf %s unknown":
+            return 0, b"x86_64\n", b""
 
         if command == "printf '' | command base64 -d >/dev/null":
             return 0, b"", b""
@@ -84,6 +94,9 @@ class ProbeContext:
         return False
 
     def exec_cmd(self, command):
+        if command == "uname -s":
+            return 0, b"Linux\n", b""
+
         if command == "printf %s simple_ssh_copy_posix_shell_ok":
             return 0, b"simple_ssh_copy_posix_shell_ok", b""
 
@@ -116,11 +129,67 @@ class UploadTests(unittest.TestCase):
         self.assertEqual(ssh_client.remote_files, {})
         self.assertTrue(all(len(command.encode("utf-8")) <= 1024 for command in ssh_client.commands))
         self.assertIn("mkdir -p /tmp", ssh_client.commands)
+        self.assertIn("uname -m 2>/dev/null || printf %s unknown", ssh_client.commands)
         self.assertTrue(any(command.startswith("printf %s ") for command in ssh_client.commands))
         self.assertTrue(any(
             command.startswith("command base64 -d ")
             and command.endswith(" > '/tmp/target file.bin'")
             for command in ssh_client.commands))
+
+    def test_upload_reports_remote_architecture_before_transfer(self):
+        ssh_client = FakeSSHClient()
+
+        with tempfile.NamedTemporaryFile(delete=False) as fpin:
+            local_path = fpin.name
+
+        try:
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                upload_files_with_ssh_client(
+                    ssh_client,
+                    [(local_path, "/tmp/target.bin")],
+                    block_siz=1024)
+        finally:
+            os.unlink(local_path)
+
+        self.assertEqual(stderr.getvalue(), "Remote architecture: x86_64\n")
+        self.assertLess(
+            ssh_client.commands.index("uname -m 2>/dev/null || printf %s unknown"),
+            ssh_client.commands.index("printf '' | command base64 -d >/dev/null"))
+
+    def test_upload_warns_and_aborts_on_windows_remote(self):
+        ssh_client = FakeSSHClient()
+
+        def windows_exec_cmd(command):
+            ssh_client.commands.append(command)
+            if command == "uname -s":
+                return 1, b"", b"'uname' is not recognized"
+            if command == "cmd.exe /c ver":
+                return 0, b"Microsoft Windows [Version 10.0.19045.0]\r\n", b""
+            return 0, b"", b""
+
+        ssh_client.exec_cmd = windows_exec_cmd
+
+        with tempfile.NamedTemporaryFile(delete=False) as fpin:
+            local_path = fpin.name
+
+        try:
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                with self.assertRaises(UnsupportedRemoteSystemError):
+                    upload_files_with_ssh_client(
+                        ssh_client,
+                        [(local_path, "/tmp/target.bin")],
+                        block_siz=1024)
+        finally:
+            os.unlink(local_path)
+
+        self.assertEqual(
+            stderr.getvalue(),
+            "\033[33mWarning: Windows remote systems are not supported. "
+            "simple_ssh_copy only supports POSIX-like remote systems. "
+            "Transfer aborted.\033[0m\n")
+        self.assertEqual(ssh_client.commands, ["uname -s", "cmd.exe /c ver"])
 
     def test_upload_uses_4096b_default_command_size(self):
         ssh_client = FakeSSHClient()
@@ -162,6 +231,8 @@ class UploadTests(unittest.TestCase):
 
         def non_posix_exec_cmd(command):
             ssh_client.commands.append(command)
+            if command == "uname -s":
+                return 0, b"Linux\n", b""
             if command == "printf %s simple_ssh_copy_posix_shell_ok":
                 return 1, b"", b"'printf' is not recognized"
             return 0, b"", b""
@@ -180,7 +251,9 @@ class UploadTests(unittest.TestCase):
         finally:
             os.unlink(local_path)
 
-        self.assertEqual(ssh_client.commands, ["printf %s simple_ssh_copy_posix_shell_ok"])
+        self.assertEqual(
+            ssh_client.commands,
+            ["uname -s", "printf %s simple_ssh_copy_posix_shell_ok"])
 
     def test_keyboard_interrupt_removes_remote_temp_file(self):
         ssh_client = FakeSSHClient()

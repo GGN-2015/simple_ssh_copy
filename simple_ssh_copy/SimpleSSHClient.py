@@ -4,8 +4,10 @@ import paramiko
 from cryptography.hazmat.primitives import hashes
 
 try:
+    from . import utils
     from .key_manager import load_rsa_key, load_ed25519_key
 except:
+    import utils
     from key_manager import load_rsa_key, load_ed25519_key
 
 
@@ -176,6 +178,11 @@ class SimpleSSHClient:
             allow_agent=allow_agent,
             look_for_keys=look_for_keys,
             key_filename=key_filename)
+        try:
+            utils.ensure_remote_is_not_windows(self)
+        except Exception:
+            self.ssh_client.close()
+            raise
 
     def __enter__(self):
         return self

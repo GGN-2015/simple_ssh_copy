@@ -9,9 +9,11 @@ import uuid
 
 try:
     from .SimpleSSHClient import SimpleSSHClient
+    from . import utils
     from .errors import UnsupportedRemoteShellError, UnusableSSHConnectionError
 except:
     from SimpleSSHClient import SimpleSSHClient
+    import utils
     from errors import UnsupportedRemoteShellError, UnusableSSHConnectionError
 
 
@@ -116,6 +118,7 @@ def probe_upload_block_size(
                     allow_agent,
                     look_for_keys,
                     key_filename) as ssh_client:
+                utils.ensure_remote_is_not_windows(ssh_client)
                 _check_posix_remote_shell(ssh_client)
                 _run_bounded_remote_command(
                     ssh_client,
@@ -263,7 +266,9 @@ def _upload_file_with_commands(
 def upload_files_with_ssh_client(ssh_client: SimpleSSHClient, files: list[tuple[str, str]], block_siz: int = 4096):
     block_siz = max(1, block_siz)
     if files:
+        utils.ensure_remote_is_not_windows(ssh_client)
         _check_posix_remote_shell(ssh_client)
+        utils.report_remote_architecture(ssh_client)
         _check_remote_base64_decoder(ssh_client)
 
     for local_path, remote_path in files:

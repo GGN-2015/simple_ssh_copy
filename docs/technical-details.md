@@ -12,9 +12,21 @@ protocol. Each operation opens an SSH command channel with Paramiko and relies
 on a small set of POSIX-like commands on the remote host.
 
 The remote SSH server must provide a POSIX-like shell. Non-POSIX SSH servers,
-such as Windows command-shell sessions, are not supported. Upload checks this
-before transferring data and raises a clear error if the remote shell does not
-behave like POSIX:
+such as Windows command-shell sessions, are not supported. Immediately after an
+SSH connection is established, the client checks the remote system type before
+running transfer commands:
+
+```sh
+uname -s
+cmd.exe /c ver
+```
+
+The Windows command is only used if `uname -s` does not identify the remote
+system. If the remote appears to be Windows, the client prints a yellow warning
+and aborts before upload, download, or directory traversal begins.
+
+Uploads also verify that the remote shell behaves like POSIX before
+transferring data:
 
 ```sh
 printf %s simple_ssh_copy_posix_shell_ok
@@ -26,6 +38,7 @@ POSIX-like remote shell is required.
 
 The remote host must also provide:
 
+- `uname` for remote system and architecture reporting
 - `mkdir` and `base64` for uploads
 - `stat` and `dd` for file downloads
 - `find` for recursive directory downloads
@@ -37,6 +50,12 @@ devices, rescue shells, and legacy SSH servers.
 ## Upload Flow
 
 Uploads are implemented in `simple_ssh_copy/upload.py`.
+
+Before transferring data, the client reports the remote architecture with:
+
+```sh
+uname -m 2>/dev/null || printf %s unknown
+```
 
 Before uploading each file, the client creates the destination directory with:
 
@@ -115,6 +134,12 @@ reported without creating a progress bar.
 ## Download Flow
 
 File downloads are implemented in `simple_ssh_copy/download.py`.
+
+Before transferring data, the client reports the remote architecture with:
+
+```sh
+uname -m 2>/dev/null || printf %s unknown
+```
 
 The client first asks the remote host for the file size:
 

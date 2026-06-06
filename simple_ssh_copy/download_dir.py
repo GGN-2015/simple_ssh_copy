@@ -68,6 +68,8 @@ def download_directory_recursive(ssh_client: SimpleSSHClient,
                                  local_root: str,
                                  encoding:str = "utf-8",
                                  block_size: int = 1024 * 1024):
+    utils.ensure_remote_is_not_windows(ssh_client)
+    utils.report_remote_architecture(ssh_client)
 
     if not check_remote_dir_exists(ssh_client, remote_root):
         raise FileNotFoundError(f"Remote directory does not exist: {remote_root}")

@@ -2,8 +2,13 @@ import sys
 import argparse
 import getpass
 import paramiko
+from . import utils
 from . import upload, download
-from .errors import UnsupportedRemoteShellError, UnusableSSHConnectionError
+from .errors import (
+    UnsupportedRemoteShellError,
+    UnsupportedRemoteSystemError,
+    UnusableSSHConnectionError,
+)
 
 
 def _authentication_error_message(exc: Exception) -> str:
@@ -116,6 +121,10 @@ def main() -> int:
         return 1
     except UnsupportedRemoteShellError as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except UnsupportedRemoteSystemError as exc:
+        if not exc.warning_printed:
+            print(utils.format_warning(str(exc)), file=sys.stderr)
         return 1
     except UnusableSSHConnectionError as exc:
         print(f"Error: {exc}", file=sys.stderr)

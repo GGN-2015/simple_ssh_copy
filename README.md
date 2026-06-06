@@ -11,6 +11,8 @@ Linux systems, embedded devices, rescue environments, and older SSH servers.
 - Upload a local file to a remote host.
 - Download a remote file to the local machine.
 - Download a remote directory recursively.
+- Aborts with a yellow warning when the remote system is detected as Windows.
+- Prints the remote architecture detected with `uname -m` before transfers.
 - Password, empty-password, SSH agent, `~/.ssh` key, and explicit private-key
   authentication.
 - Legacy SSH compatibility enabled by default:
@@ -159,7 +161,9 @@ remote transfers are not supported.
 
 - The remote host must provide a POSIX-like shell.
 - Non-POSIX SSH servers, such as Windows command-shell SSH sessions, are not
-  supported and fail with a clear error.
+  supported. Windows remotes are detected after SSH connection setup and abort
+  with a yellow warning before file operations begin.
+- Transfer startup reports the remote architecture with `uname -m`.
 - Upload uses `mkdir` and `base64` on the remote host.
 - Upload sends base64 fragments through bounded remote commands, then decodes
   the assembled temporary file on the remote host.
