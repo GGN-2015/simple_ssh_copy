@@ -82,10 +82,16 @@ class FakeSSHClient:
 
 
 class ProbeContext:
-    def __init__(self, attempts, failing_block_sizes, too_large_block_sizes=None):
+    def __init__(
+            self,
+            attempts,
+            failing_block_sizes,
+            too_large_block_sizes=None,
+            eof_block_sizes=None):
         self.attempts = attempts
         self.failing_block_sizes = failing_block_sizes
         self.too_large_block_sizes = too_large_block_sizes or set()
+        self.eof_block_sizes = eof_block_sizes or set()
 
     def __enter__(self):
         return self
@@ -105,6 +111,8 @@ class ProbeContext:
             raise ConnectionResetError(10054, "connection reset")
         if len(command.encode("utf-8")) in self.too_large_block_sizes:
             return 126, b"", b"/bin/bash: Argument list too long"
+        if len(command.encode("utf-8")) in self.eof_block_sizes:
+            raise EOFError()
         return 0, b"", b""
 
 
@@ -340,6 +348,37 @@ class UploadTests(unittest.TestCase):
 
         def fake_simple_ssh_client(*args, **kwargs):
             return ProbeContext(attempts, set(), too_large_block_sizes={4096, 2048})
+
+        def fake_upload_files_with_ssh_client(ssh_client, files, block_siz):
+            used_block_sizes.append(block_siz)
+
+        with mock.patch.object(upload_module, "SimpleSSHClient", side_effect=fake_simple_ssh_client):
+            with mock.patch.object(
+                    upload_module,
+                    "upload_files_with_ssh_client",
+                    side_effect=fake_upload_files_with_ssh_client):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    upload_module.upload(
+                        hostname="example.com",
+                        username="ubuntu",
+                        password="password",
+                        files=[("local.txt", "/tmp/remote.txt")],
+                        block_siz=4096)
+
+        self.assertEqual(attempts, [4096, 2048, 1024])
+        self.assertEqual(used_block_sizes, [1024])
+        self.assertEqual(
+            stderr.getvalue(),
+            "Warning: using upload block_siz=1024 after SSH command-size probe; "
+            "requested block_siz=4096.\n")
+
+    def test_upload_halves_block_size_after_eof_probe(self):
+        attempts = []
+        used_block_sizes = []
+
+        def fake_simple_ssh_client(*args, **kwargs):
+            return ProbeContext(attempts, set(), eof_block_sizes={4096, 2048})
 
         def fake_upload_files_with_ssh_client(ssh_client, files, block_siz):
             used_block_sizes.append(block_siz)

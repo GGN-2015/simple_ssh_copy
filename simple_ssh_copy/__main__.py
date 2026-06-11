@@ -61,6 +61,12 @@ def main() -> int:
         help="Private key file to use for SSH authentication"
     )
     parser.add_argument(
+        "--block-size",
+        type=int,
+        default=None,
+        help="Maximum transfer block size in bytes"
+    )
+    parser.add_argument(
         "source_destination",
         nargs="*",
         metavar="path"
@@ -92,6 +98,9 @@ def main() -> int:
         if not src_remote and dst_remote:
             user, host, port, remote_path = parse_remote_path(dst)
             password = getpass.getpass(f"{user}@{host}'s password: ")
+            upload_kwargs = {}
+            if args.block_size is not None:
+                upload_kwargs["block_siz"] = args.block_size
             upload(
                 hostname=host,
                 port=port,
@@ -99,7 +108,8 @@ def main() -> int:
                 password=password,
                 files=[(src, remote_path)],
                 timeout=args.timeout,
-                key_filename=args.identity_file)
+                key_filename=args.identity_file,
+                **upload_kwargs)
             return 0
 
         # Remote download to local
@@ -107,6 +117,9 @@ def main() -> int:
             user, host, port, remote_path = parse_remote_path(src)
             local_path = dst
             password = getpass.getpass(f"{user}@{host}'s password: ")
+            download_kwargs = {}
+            if args.block_size is not None:
+                download_kwargs["block_size"] = args.block_size
             download(
                 hostname=host,
                 port=port,
@@ -114,7 +127,8 @@ def main() -> int:
                 password=password,
                 files=[(remote_path, local_path)],
                 timeout=args.timeout,
-                key_filename=args.identity_file)
+                key_filename=args.identity_file,
+                **download_kwargs)
             return 0
     except paramiko.AuthenticationException as exc:
         print(_authentication_error_message(exc), file=sys.stderr)

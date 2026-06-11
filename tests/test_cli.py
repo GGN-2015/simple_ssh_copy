@@ -15,6 +15,61 @@ from simple_ssh_copy.errors import (
 
 
 class CLITests(unittest.TestCase):
+    def test_upload_passes_block_size_when_requested(self):
+        with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "python -m simple_ssh_copy",
+                    "--block-size",
+                    "2048",
+                    "test-file.txt",
+                    "ubuntu@example.com:/home/ubuntu/test-file.txt",
+                ]):
+            with mock.patch.object(cli.getpass, "getpass", return_value="password"):
+                with mock.patch.object(cli, "upload") as upload_mock:
+                    code = cli.main()
+
+        self.assertEqual(code, 0)
+        upload_mock.assert_called_once()
+        self.assertEqual(upload_mock.call_args.kwargs["block_siz"], 2048)
+
+    def test_download_passes_block_size_when_requested(self):
+        with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "python -m simple_ssh_copy",
+                    "--block-size",
+                    "65536",
+                    "ubuntu@example.com:/home/ubuntu/test-file.txt",
+                    "test-file.txt",
+                ]):
+            with mock.patch.object(cli.getpass, "getpass", return_value="password"):
+                with mock.patch.object(cli, "download") as download_mock:
+                    code = cli.main()
+
+        self.assertEqual(code, 0)
+        download_mock.assert_called_once()
+        self.assertEqual(download_mock.call_args.kwargs["block_size"], 65536)
+
+    def test_upload_omits_block_size_when_not_requested(self):
+        with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "python -m simple_ssh_copy",
+                    "test-file.txt",
+                    "ubuntu@example.com:/home/ubuntu/test-file.txt",
+                ]):
+            with mock.patch.object(cli.getpass, "getpass", return_value="password"):
+                with mock.patch.object(cli, "upload") as upload_mock:
+                    code = cli.main()
+
+        self.assertEqual(code, 0)
+        upload_mock.assert_called_once()
+        self.assertNotIn("block_siz", upload_mock.call_args.kwargs)
+
     def test_authentication_error_is_reported_without_traceback(self):
         with mock.patch.object(
                 sys,

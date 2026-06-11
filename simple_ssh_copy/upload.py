@@ -73,6 +73,8 @@ def _run_bounded_remote_command(
 
 
 def _is_connection_reset_error(exc: BaseException) -> bool:
+    if isinstance(exc, EOFError):
+        return True
     if isinstance(exc, ConnectionResetError):
         return True
     if isinstance(exc, socket.error) and getattr(exc, "errno", None) in (10054, 104):
