@@ -7,6 +7,8 @@ import socket
 import sys
 import uuid
 
+from paramiko.ssh_exception import SSHException
+
 try:
     from .SimpleSSHClient import SimpleSSHClient
     from . import utils
@@ -74,6 +76,8 @@ def _run_bounded_remote_command(
 
 def _is_connection_reset_error(exc: BaseException) -> bool:
     if isinstance(exc, EOFError):
+        return True
+    if isinstance(exc, SSHException) and str(exc).lower().rstrip(".") == "channel closed":
         return True
     if isinstance(exc, ConnectionResetError):
         return True
