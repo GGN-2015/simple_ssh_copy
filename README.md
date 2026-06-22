@@ -15,10 +15,10 @@ Linux systems, embedded devices, rescue environments, and older SSH servers.
 - Prints the remote architecture detected with `uname -m` before transfers.
 - Password, empty-password, SSH agent, `~/.ssh` key, and explicit private-key
   authentication.
-- Legacy SSH compatibility enabled by default:
-  - `HostKeyAlgorithms=+ssh-rsa`
-  - RSA public-key signing with `ssh-rsa`
-  - `MACs=+hmac-sha1-96,hmac-sha1,hmac-md5`
+- Broad SSH algorithm compatibility enabled by default. During Paramiko
+  transport setup, the client allows every currently supported key exchange,
+  cipher, MAC/digest, server host key, and public-key signature algorithm that
+  can be used by the active Paramiko transport.
 
 For implementation notes, transfer flow, block sizes, and compatibility
 details, see [Technical Details](docs/technical-details.md).
@@ -125,7 +125,7 @@ with SimpleSSHClient(
     code, stdout, stderr = ssh.exec_cmd("uname -a")
 ```
 
-## Legacy SSH Notes
+## SSH Algorithm Compatibility
 
 Some old devices require options like:
 
@@ -135,15 +135,22 @@ ssh -o HostKeyAlgorithms=+ssh-rsa \
     -i ~/.ssh/id_rsa root@192.168.1.10
 ```
 
-`simple_ssh_copy` enables the Paramiko equivalents by default, so the matching
-file-transfer command is usually:
+`simple_ssh_copy` enables a broader Paramiko-side compatibility mode by
+default. It advertises all key exchange, cipher, MAC/digest, server host key,
+and public-key signature algorithms registered by the active Paramiko transport,
+while preserving Paramiko's default preference order first. It also restores
+`ssh-rsa` host keys and RSA public-key signatures when Paramiko can use them.
+
+The matching file-transfer command is usually:
 
 ```bash
 python -m simple_ssh_copy -i ~/.ssh/id_rsa ./file root@192.168.1.10:/tmp/file
 ```
 
 If you need stricter modern SSH behavior, pass
-`allow_ssh_rsa_host_key=False` from the Python API.
+`allow_ssh_rsa_host_key=False` from the Python API. The parameter name is kept
+for API compatibility, but disabling it skips the broader compatibility
+transport setup.
 
 ## Path Format
 

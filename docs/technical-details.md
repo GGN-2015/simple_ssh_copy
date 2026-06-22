@@ -203,20 +203,41 @@ Error: Authentication failed.
 The Python API still raises exceptions normally so callers can handle them in
 their own code.
 
-## Legacy SSH Compatibility
+## SSH Algorithm Compatibility
 
-Legacy compatibility is enabled by default because many target devices expose
-old SSH servers. The transport setup adds support for:
+Broad SSH algorithm compatibility is enabled by default because many target
+devices expose old, unusual, or selectively configured SSH servers.
 
-- `ssh-rsa` host keys
-- RSA public-key signing with `ssh-rsa`
-- legacy MACs when Paramiko supports them:
-  - `hmac-sha1-96`
-  - `hmac-sha1`
-  - `hmac-md5`
+During Paramiko transport setup, `simple_ssh_copy` expands the active
+transport's negotiation preferences so the following stages can use every
+algorithm registered by that Paramiko transport:
+
+- key exchange
+- ciphers
+- MACs/digests
+- server host keys
+- public-key signature algorithms
+
+The expansion preserves Paramiko's default preference order first and appends
+any additional supported algorithms after that. This keeps modern algorithms
+preferred when both sides support them, while still allowing older servers to
+negotiate algorithms such as SHA1-era KEX, CBC/3DES ciphers, old MACs, `ssh-dss`
+on Paramiko versions that still support it, or `ssh-rsa`.
+
+Paramiko 3+ and 5+ removed or disabled some legacy algorithms from their
+defaults. When Paramiko can still parse/use `ssh-rsa`, `simple_ssh_copy`
+registers `ssh-rsa` host keys and RSA public-key signatures so old servers that
+do not support RSA SHA2 signatures can still authenticate. Algorithms that are
+not present in the installed Paramiko version are not invented.
+
+GSSAPI key exchange algorithms are only advertised when the active Paramiko
+transport has GSSAPI key exchange enabled. The normal `simple_ssh_copy` API does
+not expose GSSAPI authentication, so ordinary connections do not advertise GSS
+KEX algorithms that would require an uninitialized GSS context.
 
 For stricter modern SSH behavior, pass `allow_ssh_rsa_host_key=False` from the
-Python API.
+Python API. The parameter name is kept for API compatibility, but disabling it
+skips the broader compatibility transport setup.
 
 ## Block Size Defaults
 

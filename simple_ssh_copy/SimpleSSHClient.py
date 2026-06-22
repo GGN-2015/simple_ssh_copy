@@ -12,7 +12,8 @@ except:
 
 
 SSH_RSA_HOST_KEY_ALGORITHM = "ssh-rsa"
-LEGACY_MACS = ("hmac-sha1-96", "hmac-sha1", "hmac-md5")
+SSH_RSA_CERT_HOST_KEY_ALGORITHM = f"{SSH_RSA_HOST_KEY_ALGORITHM}-cert-v01@openssh.com"
+OPENSSH_CERT_SUFFIX = "-cert-v01@openssh.com"
 
 
 class SimpleParamikoSSHClient(paramiko.SSHClient):
@@ -42,46 +43,114 @@ class SimpleParamikoSSHClient(paramiko.SSHClient):
             passphrase)
 
 
+def _dedupe_preserving_order(*algorithm_groups: tuple[str, ...]) -> tuple[str, ...]:
+    algorithms = []
+    seen = set()
+
+    for group in algorithm_groups:
+        for algorithm in group:
+            if algorithm not in seen:
+                seen.add(algorithm)
+                algorithms.append(algorithm)
+
+    return tuple(algorithms)
+
+
+def _registered_algorithms(transport: paramiko.Transport, info_attribute: str) -> tuple[str, ...]:
+    info = getattr(transport, info_attribute, {})
+    if not isinstance(info, dict):
+        return ()
+    return tuple(info.keys())
+
+
+def _without_openssh_cert_variants(algorithms: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        algorithm
+        for algorithm in algorithms
+        if not algorithm.endswith(OPENSSH_CERT_SUFFIX)
+    )
+
+
+def _set_security_option_to_all_supported(
+        security_options,
+        option_name: str,
+        supported_algorithms: tuple[str, ...]) -> None:
+    current_algorithms = tuple(getattr(security_options, option_name))
+    setattr(
+        security_options,
+        option_name,
+        _dedupe_preserving_order(current_algorithms, supported_algorithms))
+
+
 def _add_ssh_rsa_host_key_algorithm(transport: paramiko.Transport) -> None:
     paramiko.RSAKey.HASHES.setdefault(SSH_RSA_HOST_KEY_ALGORITHM, hashes.SHA1)
     paramiko.RSAKey.HASHES.setdefault(
-        f"{SSH_RSA_HOST_KEY_ALGORITHM}-cert-v01@openssh.com",
+        SSH_RSA_CERT_HOST_KEY_ALGORITHM,
         hashes.SHA1)
     transport._key_info.setdefault(SSH_RSA_HOST_KEY_ALGORITHM, paramiko.RSAKey)
-    security_options = transport.get_security_options()
-    key_types = tuple(security_options.key_types)
-
-    if SSH_RSA_HOST_KEY_ALGORITHM not in key_types:
-        security_options.key_types = key_types + (SSH_RSA_HOST_KEY_ALGORITHM,)
+    transport._key_info.setdefault(SSH_RSA_CERT_HOST_KEY_ALGORITHM, paramiko.RSAKey)
 
 
-def _add_ssh_rsa_public_key_algorithm(transport: paramiko.Transport) -> None:
-    pubkeys = tuple(transport._preferred_pubkeys)
+def _supported_key_exchange_algorithms(transport: paramiko.Transport) -> tuple[str, ...]:
+    algorithms = _registered_algorithms(transport, "_kex_info")
+    if getattr(transport, "use_gss_kex", False):
+        return algorithms
 
-    if SSH_RSA_HOST_KEY_ALGORITHM not in pubkeys:
-        transport._preferred_pubkeys = pubkeys + (SSH_RSA_HOST_KEY_ALGORITHM,)
-
-
-def _add_legacy_macs(transport: paramiko.Transport) -> None:
-    security_options = transport.get_security_options()
-    digests = tuple(security_options.digests)
-    available_macs = set(transport._mac_info.keys())
-    macs_to_add = tuple(
-        mac
-        for mac in LEGACY_MACS
-        if mac in available_macs and mac not in digests
+    gss_kex_algorithms = set(getattr(transport, "_preferred_gsskex", ()) or ())
+    return tuple(
+        algorithm
+        for algorithm in algorithms
+        if algorithm not in gss_kex_algorithms
     )
 
-    if macs_to_add:
-        security_options.digests = digests + macs_to_add
+
+def _supported_host_key_algorithms(transport: paramiko.Transport) -> tuple[str, ...]:
+    return _without_openssh_cert_variants(
+        _registered_algorithms(transport, "_key_info"))
 
 
-def _transport_factory_with_legacy_algorithms(*args, **kwargs) -> paramiko.Transport:
+def _supported_public_key_signature_algorithms(
+        transport: paramiko.Transport) -> tuple[str, ...]:
+    rsa_signature_algorithms = tuple(getattr(paramiko.RSAKey, "HASHES", {}).keys())
+    return _without_openssh_cert_variants(
+        _dedupe_preserving_order(
+            _registered_algorithms(transport, "_key_info"),
+            rsa_signature_algorithms))
+
+
+def _allow_all_supported_negotiation_algorithms(
+        transport: paramiko.Transport) -> None:
+    security_options = transport.get_security_options()
+    _set_security_option_to_all_supported(
+        security_options,
+        "kex",
+        _supported_key_exchange_algorithms(transport))
+    _set_security_option_to_all_supported(
+        security_options,
+        "ciphers",
+        _registered_algorithms(transport, "_cipher_info"))
+    _set_security_option_to_all_supported(
+        security_options,
+        "digests",
+        _registered_algorithms(transport, "_mac_info"))
+    _set_security_option_to_all_supported(
+        security_options,
+        "key_types",
+        _supported_host_key_algorithms(transport))
+
+    transport._preferred_pubkeys = _dedupe_preserving_order(
+        tuple(transport._preferred_pubkeys),
+        _supported_public_key_signature_algorithms(transport))
+
+
+def _transport_factory_with_all_supported_algorithms(*args, **kwargs) -> paramiko.Transport:
     transport = paramiko.Transport(*args, **kwargs)
     _add_ssh_rsa_host_key_algorithm(transport)
-    _add_ssh_rsa_public_key_algorithm(transport)
-    _add_legacy_macs(transport)
+    _allow_all_supported_negotiation_algorithms(transport)
     return transport
+
+
+_transport_factory_with_legacy_algorithms = _transport_factory_with_all_supported_algorithms
 
 
 def _ssh_client_connect_accepts_transport_factory() -> bool:
@@ -138,7 +207,7 @@ def make_ssh_client(
         channel_timeout=timeout
     )
     if allow_ssh_rsa_host_key and _ssh_client_connect_accepts_transport_factory():
-        connect_kwargs["transport_factory"] = _transport_factory_with_legacy_algorithms
+        connect_kwargs["transport_factory"] = _transport_factory_with_all_supported_algorithms
 
     ssh.connect(**connect_kwargs)
     return ssh
